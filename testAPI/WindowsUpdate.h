@@ -10,15 +10,15 @@ public:
     ~WindowsUpdate();
 
     bool Initialize();
-    bool SearchUpdates(const char* input);
-    void DisplayUpdates();
-    std::string GetUpdateName(IUpdate* update);
-    std::string GetUpdateDate(IUpdate* update);
+    bool GetUpdateHistory(const char* criteria, long startIndex, long count);
+    void DisplayUpdateHistory();
+
+    std::string GetUpdateDescription(IUpdateHistoryEntry* historyEntry);
+    std::string GetUpdateDate(IUpdateHistoryEntry* historyEntry);
 
 private:
-    IUpdateSession* updateSession;
-    IUpdateSearcher* updateSearcher;
-    ISearchResult* searchResult;
+    IUpdateSession3* updateSession;
+    IUpdateHistoryEntryCollection* updateHistory;
     bool CoInitializeSucceeded;
 };
 

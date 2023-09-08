@@ -27,15 +27,14 @@ std::string BSTRToUTF8(const BSTR bstr)
     return result;
 }
 
-WindowsUpdate::WindowsUpdate() : updateSession(nullptr), updateSearcher(nullptr), searchResult(nullptr), CoInitializeSucceeded(false)
+WindowsUpdate::WindowsUpdate() : updateSession(nullptr), updateHistory(nullptr), CoInitializeSucceeded(false)
 {
-	CoInitializeSucceeded = SUCCEEDED(CoInitialize(NULL));
+    CoInitializeSucceeded = SUCCEEDED(CoInitialize(nullptr));
 }
 
 WindowsUpdate::~WindowsUpdate()
 {
-    if (searchResult) searchResult->Release();
-    if (updateSearcher) updateSearcher->Release();
+    if (updateHistory) updateHistory->Release();
     if (updateSession) updateSession->Release();
     if (CoInitializeSucceeded) CoUninitialize();
 }
@@ -48,59 +47,54 @@ bool WindowsUpdate::Initialize()
         return false;
     }
 
-    HRESULT hr = CoCreateInstance(CLSID_UpdateSession, NULL, CLSCTX_INPROC_SERVER, IID_IUpdateSession, (LPVOID*)&updateSession);
+    HRESULT const hr = CoCreateInstance(CLSID_UpdateSession, nullptr, CLSCTX_INPROC_SERVER, IID_IUpdateSession, (LPVOID*)&updateSession);
     if (FAILED(hr)) 
     {
         std::cerr << "Failed to create UpdateSession instance." << std::endl;
         return false;
     }
 
-    hr = updateSession->CreateUpdateSearcher(&updateSearcher);
+    return true;
+}
+bool WindowsUpdate::GetUpdateHistory(const char* criteria, long startIndex, long count)
+{
+    if (!updateSession) 
+    {
+        std::cerr << "UpdateSession is not initialized." << std::endl;
+        return false;
+    }
+    BSTR const bstrCriteria = SysAllocString(char_to_bstr(criteria));
+    HRESULT const hr = updateSession->QueryHistory(bstrCriteria, startIndex, count, &updateHistory);
     if (FAILED(hr)) 
     {
-        std::cerr << "Failed to create UpdateSearcher instance." << std::endl;
+        std::cerr << "Failed to query update history." << std::endl;
         return false;
     }
 
     return true;
 }
 
-bool WindowsUpdate::SearchUpdates(const char* input)
+std::string WindowsUpdate::GetUpdateDescription(IUpdateHistoryEntry* historyEntry)
 {
-    if (!updateSearcher) 
-    {
-        std::cerr << "UpdateSearcher is not initialized." << std::endl;
-        return false;
-    }
-
-    BSTR const criteria = char_to_bstr(input);
-    HRESULT const hr = updateSearcher->Search(criteria, &searchResult);
-    SysFreeString(criteria);
-
-    return SUCCEEDED(hr);
-}
-
-std::string WindowsUpdate::GetUpdateName(IUpdate* update)
-{
-    BSTR updateName;
-    HRESULT const hr = update->get_Title(&updateName);
+    BSTR description;
+    HRESULT const hr = historyEntry->get_Title(&description);
     if (SUCCEEDED(hr)) 
     {
-        std::string updateNameUTF8 = BSTRToUTF8(updateName);
-        SysFreeString(updateName);
+        std::string updateNameUTF8 = BSTRToUTF8(description);
+        SysFreeString(description);
         return updateNameUTF8;
     }
     return "";
 }
 
-std::string WindowsUpdate::GetUpdateDate(IUpdate* update)
+std::string WindowsUpdate::GetUpdateDate(IUpdateHistoryEntry* historyEntry)
 {
-    DATE lastDeploymentChangeTime;
-    HRESULT const hr = update->get_LastDeploymentChangeTime(&lastDeploymentChangeTime);
+    DATE date;
+    HRESULT const hr = historyEntry->get_Date(&date);
     if (SUCCEEDED(hr)) 
     {
         SYSTEMTIME sysTime;
-        VariantTimeToSystemTime(lastDeploymentChangeTime, &sysTime);
+        VariantTimeToSystemTime(date, &sysTime);
         std::stringstream ss;
         ss << std::setfill('0') << std::setw(4) << sysTime.wYear << "-"
             << std::setw(2) << sysTime.wMonth << "-" << std::setw(2) << sysTime.wDay;
@@ -109,50 +103,39 @@ std::string WindowsUpdate::GetUpdateDate(IUpdate* update)
     return "";
 }
 
-void WindowsUpdate::DisplayUpdates()
+void WindowsUpdate::DisplayUpdateHistory()
 {
-    if (!searchResult) 
+    if (!updateHistory) 
     {
-        std::cerr << "SearchResult is not available." << std::endl;
+        std::cerr << "UpdateHistory is not available." << std::endl;
         return;
     }
-
-    IUpdateCollection* updateCollection;
-    HRESULT hr = searchResult->get_Updates(&updateCollection);
-    if (FAILED(hr)) 
-    {
-        std::cerr << "Failed to get Updates from SearchResult." << std::endl;
-        return;
-    }
-
     long itemCount;
-    hr = updateCollection->get_Count(&itemCount);
+    HRESULT hr = updateHistory->get_Count(&itemCount);
     if (FAILED(hr)) 
-    {
-        std::cerr << "Failed to get update count." << std::endl;
+    {   
+        std::cerr << "Failed to get update history count." << std::endl;
         return;
     }
 
     for (long i = 0; i < itemCount; i++) 
     {
-        IUpdate* update;
-        hr = updateCollection->get_Item(i, &update);
+        IUpdateHistoryEntry* historyEntry;
+        hr = updateHistory->get_Item(i, &historyEntry);
         if (FAILED(hr)) 
         {
             std::cerr << "Failed to get update at index " << i << std::endl;
             continue;
         }
 
-        std::string updateName = GetUpdateName(update);
-        std::string updateDate = GetUpdateDate(update);
+        std::string description = GetUpdateDescription(historyEntry);
+        std::string updateDate = GetUpdateDate(historyEntry);
 
-        if (!updateName.empty() && !updateDate.empty()) 
+        if (!description.empty() && !updateDate.empty()) 
         {
-            std::cout << "Update Name: " << updateName << " - Date: " << updateDate << std::endl;
+            std::cout << "Description: " << description << " - Date: " << updateDate << std::endl;
         }
 
-        update->Release();
+        historyEntry->Release();
     }
-
-    updateCollection->Release();
 }
