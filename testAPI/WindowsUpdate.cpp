@@ -1,10 +1,13 @@
-#include "WindowsUpdate.h"
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
 #include <iomanip>
 #include <iostream>
 #include <comutil.h>
-#include <ctime>
 #include <sstream>
 
+#include "WindowsUpdate.h"
+
+namespace pt = boost::property_tree;
 BSTR char_to_bstr(const char* input)
 {
     int wideStrLength = MultiByteToWideChar(CP_ACP, 0, input, -1, NULL, 0);
@@ -74,7 +77,59 @@ bool WindowsUpdate::GetUpdateHistory(const char* criteria, long startIndex, long
     return true;
 }
 
-std::string WindowsUpdate::GetUpdateDescription(IUpdateHistoryEntry* historyEntry)
+std::string WindowsUpdate::GetUpdateJSON()
+{
+	if(!updateHistory)
+	{
+        std::cerr << "UpdateHistory is not available." << std::endl;
+        return "[]";
+	}
+
+    long itemCount;
+    HRESULT const hr = updateHistory->get_Count(&itemCount);
+    if (FAILED(hr)) 
+    {
+        std::cerr << "Failed to get update history count." << std::endl;
+        return "[]";
+    }
+    std::vector<UpdateHistoryEntry> historyEntries;
+	for(int i = 0; i < itemCount; i++)
+	{
+        IUpdateHistoryEntry* historyEntry;
+        HRESULT const hr = updateHistory->get_Item(i, &historyEntry);
+        if (FAILED(hr)) 
+        {
+            std::cerr << "Failed to get update history entry at index " << i << std::endl;
+            continue;
+        }
+        
+       /* std::string title = GetUpdateTitle(historyEntry);
+        std::string date = GetUpdateDate(historyEntry);*/
+        UpdateHistoryEntry entry;
+        entry.title = GetUpdateTitle(historyEntry);
+        entry.date = GetUpdateDate(historyEntry);
+
+        historyEntries.push_back(entry);
+
+        historyEntry->Release();
+	}
+    boost::property_tree::ptree json;
+    boost::property_tree::ptree arrayNode;
+    for(const auto& entry: historyEntries)
+    {
+        boost::property_tree::ptree entryNode;
+        entryNode.put("name", entry.title);
+        entryNode.put("date", entry.date);
+        arrayNode.push_back(std::make_pair("", entryNode));
+    }
+    std::ostringstream oss;
+    json.add_child("Updates", arrayNode);
+    boost::property_tree::json_parser::write_json(oss, json);
+
+    return oss.str();
+}
+
+std::string WindowsUpdate::GetUpdateTitle(IUpdateHistoryEntry* historyEntry)
 {
     BSTR description;
     HRESULT const hr = historyEntry->get_Title(&description);
@@ -128,12 +183,12 @@ void WindowsUpdate::DisplayUpdateHistory()
             continue;
         }
 
-        std::string description = GetUpdateDescription(historyEntry);
+        std::string title = GetUpdateTitle(historyEntry);
         std::string updateDate = GetUpdateDate(historyEntry);
 
-        if (!description.empty() && !updateDate.empty()) 
+        if (!title.empty() && !updateDate.empty())
         {
-            std::cout << "Description: " << description << " - Date: " << updateDate << std::endl;
+            std::cout << "Description: " << title << " - Date: " << updateDate << std::endl;
         }
 
         historyEntry->Release();
